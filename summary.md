@@ -17,6 +17,8 @@ rotation direction. `diagnostics.R` checks matrices, alignment, closure, and
 screen-plane direction, and exports motion plots. `render.R` draws depth-sorted
 translucent faces with base R/Cairo or optional RGL. `foreach`/`doParallel` support
 parallel rendering; FFmpeg encodes MP4. `text.R` supplies custom text utilities.
+The base renderer strokes the true edge graph after all face fills, keeping
+edges visible through degenerate projections and overlapping translucent faces.
 
 Outputs include solver checkpoints, full trajectory RDS data, PNG frames,
 validation metrics, motion plots, and R session information. Output directories
@@ -31,3 +33,5 @@ preservation audit; `docs/deprecated.sha256` checks the frozen `deprecated/`
 reference. Working code has no runtime dependency on that archive. The separate
 `run.R` and top-level `src/*.R` are an eased-pose comparison implementation with
 their own tests and preview utilities.
+`scripts/check_incremental_rendering.R` checks edge visibility in raster output,
+including dense overlaps, edge-on faces, and near-collapsed dimensions.

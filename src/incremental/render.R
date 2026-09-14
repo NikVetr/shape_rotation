@@ -1,4 +1,28 @@
 # Rendering copied from deprecated/rotate_hypercube.R.
+draw_incremental_projection <- function(xy, depth, faces, edges, face_col, edge_col) {
+  projected_faces <- lapply(seq_len(nrow(faces)), function(i) {
+    vertices <- faces[i, ]
+    vertices[chull(xy[vertices, , drop = FALSE])]
+  })
+  projected_faces <- Filter(function(vertices) length(vertices) >= 3, projected_faces)
+  face_depths <- vapply(projected_faces, function(vertices) mean(depth[vertices]), numeric(1))
+  for (i in order(face_depths, decreasing = TRUE)) {
+    polygon(xy[projected_faces[[i]], , drop = FALSE], col = face_col, border = NA)
+  }
+
+  # Edges survive even when their incident faces project to lines. Draw them
+  # after all fills so repeated translucent faces cannot erase the outlines.
+  delta <- xy[edges[, 1], , drop = FALSE] - xy[edges[, 2], , drop = FALSE]
+  edges <- edges[rowSums(delta^2) > 1e-24, , drop = FALSE]
+  if (nrow(edges)) {
+    # One compound stroke keeps coincident copies from darkening antialiasing.
+    indices <- as.vector(t(cbind(edges, edges[, 1], NA_integer_)))
+    indices <- indices[-length(indices)]
+    polypath(xy[indices, 1], xy[indices, 2], col = NA, border = edge_col,
+             lwd = 2, xpd = NA)
+  }
+}
+
 render_incremental_animation <- function(animation, out, thin = 2L, cores = 1L,
                                          use_rgl = FALSE, video = TRUE) {
   list2env(animation, environment())
@@ -232,7 +256,8 @@ if(use_rgl){
   }
 } else {
   base_r_version <- function(){}
-  foo <- foreach(pi=1:n_plotting_inds, .packages=c("png")) %dopar% {
+  foo <- foreach(pi=1:n_plotting_inds, .packages=c("png"),
+                 .export = "draw_incremental_projection") %dopar% {
 
     i <- plotting_inds[pi]
 
@@ -255,44 +280,9 @@ if(use_rgl){
     #             ylim = c(-max_val[i], max_val[i]), asp = 1)
 
 
-    #recover face coords in 3D
-    verts <- hcube_proj[!duplicated(round(hcube_proj, 9)),]
-    nverts <- nrow(verts)
-    if(nverts >= 4){
-
-      face_coords <- lapply(1:nrow(rot_hcube$faces), function(fi){
-        f_inds <- rot_hcube$faces[fi, chull(hcube_proj[rot_hcube$faces[fi, ], ])]
-        if(length(f_inds) == 4){
-          return(cbind(hcube_proj[f_inds, ], depth_proj[f_inds]))
-        } else {
-          return(NA)
-        }
-      })
-      face_coords <- Filter(function(x) is.matrix(x) && all(is.finite(x)), face_coords)
-
-      #recover order of faces
-      face_depths <- sapply(face_coords, function(x) mean(x[,3]))
-      face_order <- order(face_depths, decreasing=T)  # farthest to nearest
-
-    } else {
-      #here we have a line, so we can just plot it once?
-      face_coords <- list(verts)
-      face_order <- 1
-    }
-
-
-    #plot faces of the polygon
-    for(f in face_order) {
-      polygon(face_coords[[f]][,1:2], col = face_cols[min(i, length(face_cols))],
-              border = seg_cols[min(i, length(seg_cols))],
-              lwd = 2, xpd = NA)
-    }
-
-    #plot edges of the polygon
-    # segments(x0 = hcube_proj[rot_hcube$edges[,1],1],
-    #          y0 = hcube_proj[rot_hcube$edges[,1],2],
-    #          x1 = hcube_proj[rot_hcube$edges[,2],1],
-    #          y1 = hcube_proj[rot_hcube$edges[,2],2], col = seg_cols[i], lwd = 2)
+    draw_incremental_projection(hcube_proj, depth_proj, rot_hcube$faces, rot_hcube$edges,
+                                face_cols[min(i, length(face_cols))],
+                                seg_cols[min(i, length(seg_cols))])
 
     dev.off()
   }

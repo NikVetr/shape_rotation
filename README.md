@@ -69,6 +69,11 @@ labels remain behind `--rgl`; install `rgl` separately and use an OpenGL-capable
 environment. That branch has not been validated on this laptop. The copied
 custom text utilities remain available; the original base-R branch drew no labels.
 
+The base renderer draws the cube's actual edges after all face fills. This keeps
+edge-on faces from losing their edges and prevents translucent face layers from
+painting over previously drawn outlines. Coincident edges share one compound
+stroke to avoid repeated antialiasing buildup.
+
 Smooth joins and a consistent screen-plane rotation direction do **not** imply
 constant full-dimensional angular speed or eliminate every perceptual rhythm.
 Saved motion plots expose that variation. Short upper-dimensional stages can
@@ -79,6 +84,7 @@ trajectory remains a separate check.
 
 ```sh
 Rscript scripts/check_incremental.R
+Rscript scripts/check_incremental_rendering.R
 shasum -a 256 -c docs/deprecated.sha256
 ```
 

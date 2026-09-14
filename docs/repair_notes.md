@@ -81,6 +81,13 @@ normalization in this pipeline. The eased implementation remains separate in
     ffmpeg failures are checked, workers stopped, and expensive solves checkpointed.
     Logging uses `cat` without a shell. Face-list filtering is explicit and plot
     margins are set before plotting. RGL labels also handle dimensions above 9.
+12. **Disappearing edges in base rendering.** Outlines were coupled to accepted
+    four-corner face hulls, and later translucent fills could cover earlier
+    outlines. Face fills now precede a separate pass over the cube's true edge
+    list. Degenerate faces cannot remove edges; coincident edges are stroked
+    together to keep antialiasing stable. This makes back edges fully visible
+    instead of progressively obscuring them with face layers. Motion data and
+    the optional RGL branch are unchanged by this rendering fix.
 
 Suspicious comments in `undokrot` were not sufficient reason to replace it:
 round-trip tests pass for the small incremental rotations it actually receives.
@@ -98,6 +105,11 @@ Base rendering is exercised by k=5 and k=9 previews. RGL and optional text
 utilities are retained but not fully exercised. The original renderer can still
 show opacity changes when overlapping faces split or merge. No replacement
 silhouette/edge renderer has been silently substituted.
+
+`scripts/check_incremental_rendering.R` checks visible ink along projected edges
+in line, edge-on-face, square, coincident, dense k=3/5/9, and near-collapse cases.
+The previous renderer fails the check; the corrected renderer passes. The k=9
+video was rerendered from the same saved trajectory to isolate the visual fix.
 
 These repairs remove specific discontinuities. They do not prove globally
 minimal nudges, constant full-dimensional angular speed, or absence of perceived
