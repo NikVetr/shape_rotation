@@ -1,72 +1,94 @@
-# Smooth hypercube rotation
+# Incremental hypercube rotation
 
-Render a continuous `1 → 2 → … → k → … → 2 → 1` cube projection. The screen rotation keeps turning in one direction. Higher-dimensional tilts unfold and ease back into alignment, with continuous position, velocity, and acceleration at every dimension boundary and at the loop seam.
+The working entry point is `run_original.R`. Its implementation lives in
+`src/incremental/`: editable copies of the original scripts, with targeted
+repairs. `deprecated/` is a frozen reference and is never loaded at runtime.
 
-## Setup and run
+The animation unfolds `1 → 2 → … → k` and collapses back to a rotating line.
+Each frame applies a small Givens rotation to a rigid cube. Collapse optimization
+nudges those rotations toward alignment, with gradual velocity changes and a
+search over transition durations. This retains the original motion model,
+nonlinear schedule, rotation prior, and face renderer.
 
-On macOS, install the tools globally with Homebrew:
+## Install and run
 
 ```sh
 brew install r ffmpeg imagemagick
+Rscript -e 'install.packages(c("expm", "foreach", "doParallel", "png"), repos="https://cloud.r-project.org")'
+Rscript run_original.R --k=9 --cores=4 --out=output/my-k9
 ```
 
-The animation uses **base R with Cairo**; no extra R packages, RStudio, OpenGL, or XQuartz are required. FFmpeg encodes the MP4. ImageMagick is used for preview sheets and raster regression tests.
+The output directory must be new or empty. It contains `rotation.mp4`, PNG
+frames, `animation.rds`, individual collapse checkpoints, `motion.csv`,
+`motion.png`, validation metrics, and R session information. Existing outputs
+are never deleted. `output/` and exploratory `tmp/` are ignored by Git.
+
+The original defaults are retained: 720 forward steps, 120 steps per reference
+rotation, seed 1, ten optimization candidates, and a ±10% duration search for
+each collapse. Integration uses 60 steps per second; `--thin=2` renders every
+second step into a 30 fps video. Rendering defaults to one worker; `--cores`
+also sets the maximum number of concurrent optimization candidates.
 
 ```sh
-Rscript run.R --k=9 --fps=30 --seconds=48 --supersample=2 --out=output/my-k9
-Rscript scripts/preview.R output/my-k9
+# Solve and inspect before rendering.
+Rscript run_original.R --k=9 --cores=4 --plan-only --out=output/plan
+# Render saved data into a different, empty directory.
+Rscript run_original.R --resume=output/plan/animation.rds --cores=4 --out=output/video
+# Fewer restarts provide less search coverage.
+Rscript run_original.R --k=5 --nrots=360 --nrep=3 --out=output/quick
+Rscript run_original.R --help
 ```
 
-Open `output/my-k9/rotation.mp4`. The output also contains PNG frames, compact `animation.rds` data, `schedule.csv`, `continuity.csv`, and `sessionInfo.txt`. The preview command adds `storyboard.png`, `motion.png`, and milestone images. It does not require rendering all video frames first.
+`--nrots` changes the original schedule's time scale. Larger values allow more
+time for alignment. `--seed` selects a different initial rotation. `--no-video`
+saves frames without encoding. Maximum dimension must be at least 3; the
+animation includes line and square stages. There is no fixed upper cap, but
+vertices and faces grow exponentially.
 
-The output directory must be new or empty. Existing animations are never deleted. An omitted `--out` creates a timestamped directory under `output/`. Both `output/` and exploratory `tmp/` files are ignored by git.
+The closing interval is timed so the frame count is divisible by `--thin`.
+When resuming saved data, choose a thinning factor that divides its length;
+`--thin=1` always does. This avoids a shorter time interval at the video seam.
 
-Useful alternatives:
+## Motion and rendering
+
+Square-to-line stages retain the original diagonal-axis tilt. Expansion blends
+the original nested subrotations in Givens coordinates using a cosine velocity
+profile. Collapse retains the logistic-simplex family and the two-pass objective:
+alignment, deviation from incoming rotation, and a blend-shape prior. Endpoint
+conditions match incoming velocity and stop revealing the outgoing hidden axis.
+Remaining alignment error is corrected through the whole control curve, never
+by changing only the last frame.
+
+Timing candidates are scored using their own durations. Invalid candidates are
+reported and rejected; the run fails if none meet alignment. Optimization is
+local and does not establish a global minimum correction.
+
+Rendering retains depth-sorted translucent faces, colored outlines, 800×800 Cairo
+PNGs, fixed bounds, and parallel workers. The original RGL branch and its PNG
+labels remain behind `--rgl`; install `rgl` separately and use an OpenGL-capable
+environment. That branch has not been validated on this laptop. The copied
+custom text utilities remain available; the original base-R branch drew no labels.
+
+Smooth joins and a consistent screen-plane rotation direction do **not** imply
+constant full-dimensional angular speed or eliminate every perceptual rhythm.
+Saved motion plots expose that variation. Short upper-dimensional stages can
+require substantial corrections. Visual acceptance of the “barely nudged”
+trajectory remains a separate check.
+
+## Validation and reference
 
 ```sh
-Rscript run.R --k=3 --seconds=12 --out=output/cube
-Rscript run.R --k=10 --seconds=60 --wireframe --out=output/k10
-Rscript run.R --k=12 --seconds=60 --no-frames --out=output/k12-plan
-Rscript run.R --help
+Rscript scripts/check_incremental.R
+shasum -a 256 -c docs/deprecated.sha256
 ```
 
-`--turns` is a positive integer number of screen rotations per loop. `--wobble=0` disables the gentle internal oscillation during holds; the unfold/collapse tilts and screen rotation still run. `--seed` deterministically selects viewing orientations. `--no-video` writes frames without encoding. `--supersample=2` draws frames at twice the requested width/height and downsamples the MP4 for cleaner thin edges. PNGs retain that larger size. MP4 dimensions must be even.
+Checks exercise Givens reconstruction through dimension 9, proper rotation
+products, endpoint velocity constraints, interpolation convergence at joins,
+same-direction line closure, timing metadata, and complete multi-seed
+trajectories. Full runs validate their own alignment and projected loop seam.
 
-The requested duration is rounded to the nearest frame. Each phase needs at least four frames; insufficient duration/fps combinations fail explicitly. The endpoint at exactly the duration is excluded from encoding, so a looping player does not show the first frame twice.
-
-## Geometry and motion
-
-Vertices have coordinates `±0.5`; all edges retain unit length in the ambient space. A fixed orthographic projection displays the first two coordinates. Hidden coordinate axes have exactly zero screen contribution at lower-dimensional holds, up to floating-point roundoff. Thus a d-cube hold has `2^d` distinct projected vertices, rather than merely a different text label.
-
-The pose is a product of explicit plane rotations:
-
-1. A constant, positive screen rotation through an integer number of turns.
-2. Nested tilts mixing each new axis with a direction in the screen plane.
-3. A square-to-line tilt into one spare coordinate, whose original vertex values are zero.
-
-That spare coordinate allows the square to turn edge-on without scaling or deforming its edges. It does **not** add another cube dimension. The original k-cube stays rigid; unfolding and collapsing describe its projection.
-
-Each dimension has an unfold interval, a visible interval, and a collapse interval. The quintic easing function `6u^5 - 15u^4 + 10u^3` has zero first and second derivatives at its endpoints. Nested factors become identities outside their intervals, so higher dimensions cannot leak into earlier or later holds. Periodic internal oscillations and integer screen turns close the loop without a final corrective rotation. Motion is C2; it does not promise continuous jerk or fixed direction in every individual rotation plane.
-
-There is no numerical collapse optimizer in the active pipeline: alignment is an exact endpoint constraint satisfied by construction. This avoids optimizer restarts and matrix logarithm branch problems entirely.
-
-## Rendering and scale
-
-The renderer draws the cube's projected edge graph over a pale blue convex silhouette. It uses one compound stroke for the edges, so overlapping copies have the same opacity and antialiasing as a single edge. Zero-length edges are omitted at numerical precision to prevent Cairo cap dots. There is no line/polygon threshold, per-frame camera fit, or depth-sort switch. The silhouette is a readability aid, not opaque 3D face occlusion; `--wireframe` removes it.
-
-Geometry is generated using bit indices in `O(k 2^k)`, not all-pairs vertex comparisons. Only the currently visible cube's graph is drawn; compact poses are saved instead of storing all full-dimensional vertex frames. Supported `k` is 1–16 as an allocation guard. Geometry and raster cost still grow exponentially: dimensions 8–10 are practical previews, while larger values warrant shorter runs or `--no-frames` first. Dense edge overlap at high k is inherent to a 2D projection.
-
-## Checks
-
-```sh
-Rscript run.R --test-only
-Rscript scripts/check_rendering.R
-```
-
-Core tests cover topology through k=10, unit edge lengths, proper rotations and distance preservation, exact dimension order, distinct projected vertices and hidden-axis alignment, small dimensions, k=16 pose planning, frame-rate independence, invalid inputs, and continuity at all joins and the seam. A convergence check verifies that derivative discrepancies decrease as the finite-difference interval shrinks.
-
-Raster tests compare both graph representations at identical limiting coordinates at all 32 transitions for k=9. This isolates opacity/antialiasing jumps from ordinary subpixel movement. `continuity.csv` reports numerical one-sided derivative comparisons; small residuals reflect finite-difference and floating-point error, not exact analytical discontinuities.
-
-`deprecated/` contains the original exploratory scripts as reference material. The supported entry point is `run.R`.
-
-See [repair notes](docs/repair_notes.md) for the specific defects found in the supplied code and the regression checks that address them.
+See [repair notes](docs/repair_notes.md) for the preservation audit. The older
+`run.R` and top-level `src/*.R` are retained as a comparison experiment using
+prescribed eased poses. They are **not** the incremental optimizer described here.
+Their checks remain separate: `Rscript run.R --test-only` and
+`Rscript scripts/check_rendering.R`.

@@ -1,23 +1,33 @@
-# Project summary
+# Hypercube rotation
 
-This base-R project renders a smoothly unfolding and collapsing orthographic hypercube projection, from a rotating line through dimensions 2 to k and back to a line. The default animation is a 48-second, 30-fps 1→9→1 loop. All rotations preserve the rigid cube's edge lengths; only its projection changes dimensional appearance.
+This R project renders a rigid hypercube's orthographic projection as its visible
+dimension grows from a rotating line through k dimensions and returns to a line.
+`run_original.R` configures, solves, validates, saves, and renders the pipeline
+in `src/incremental/`.
 
-`run.R` validates command-line options, runs the local checks, builds the animation, saves reproducibility data, renders PNG frames, and calls FFmpeg for H.264 MP4 output. Each run writes a new directory under the ignored `output/` tree.
+`geometry.R` supplies vertices, faces, Givens rotations, subrotations, and label
+rasterization. `optimization.R` blends small angular increments and searches
+collapse durations with L-BFGS-B. A prior favors small changes from incoming
+motion. Control-curve refinement enforces alignment without a last-frame impulse;
+exact blend endpoints constrain incoming/outgoing velocity.
 
-The implementation is divided into:
+`animation.R` applies rotations on a nonlinear dimension schedule, handles
+edge-on square/line tilts, and closes the projected loop in the continuing
+rotation direction. `diagnostics.R` checks matrices, alignment, closure, and
+screen-plane direction, and exports motion plots. `render.R` draws depth-sorted
+translucent faces with base R/Cairo or optional RGL. `foreach`/`doParallel` support
+parallel rendering; FFmpeg encodes MP4. `text.R` supplies custom text utilities.
 
-- `src/rotation_math.R`: analytic plane rotations, quintic easing, validation, and bit-indexed cube vertices, edges, and square faces.
-- `src/dimension_schedule.R`: unfold, hold, and collapse intervals and C2 dimension gates.
-- `src/animation.R`: periodic poses composed from constant screen rotation, gated higher-dimensional tilts, and a spare-coordinate square-to-line rotation. Compact poses and projection matrices are stored per frame.
-- `src/diagnostics.R`: one-sided velocity and acceleration comparisons at every phase boundary and the loop seam.
-- `src/render_frames.R`: fixed framing, a translucent projected silhouette, compound-path edge drawing, headless Cairo PNG output, and checked FFmpeg encoding.
-- `src/tests.R`: topology, rigid geometry, exact dimension stages, periodicity, derivative convergence, frame sampling, and input validation.
-- `scripts/check_rendering.R`: ImageMagick pixel comparisons at dimension boundaries.
-- `scripts/preview.R`: milestone storyboards and base-R motion plots from saved animation data.
-- `deprecated/`: reference scripts outside the supported execution path.
+Outputs include solver checkpoints, full trajectory RDS data, PNG frames,
+validation metrics, motion plots, and R session information. Output directories
+must be empty; `output/` and exploratory `tmp/` are ignored by Git. Maximum
+dimension is at least three; computational cost grows exponentially. Local
+optimization does not guarantee globally minimal corrections or constant
+full-dimensional angular speed.
 
-The motion is constructed to satisfy alignment exactly, eliminating numerical collapse optimization and final-frame corrections. Quintic gates ensure continuous position, velocity, and acceleration while the screen rotation always proceeds in the same direction. A spare zero coordinate allows a square to turn edge-on as a line without deforming the cube. The encoded loop excludes its duplicated endpoint.
-
-Rendering uses a single compound stroke to avoid brightness changes from coincident edge copies. A fixed camera avoids zoom changes. The pale blue convex silhouette improves legibility without depth-sorting artifacts. Geometry is generated only for the visible dimension, and storage contains poses rather than large vertex histories. Rendering remains exponential in k; input is limited to dimensions 1–16, with 8–10 suitable for ordinary previews.
-
-The runtime needs R with Cairo and FFmpeg; no external R packages are required. ImageMagick supplies preview composition and raster checks. Outputs include `animation.rds`, PNG frames, `rotation.mp4`, phase and continuity CSV files, and an R session record. README.md documents installation, commands, the geometry, and validation.
+`scripts/check_incremental.R` covers geometry, interpolation, endpoint conditions,
+timing metadata, and full trajectories. `docs/repair_notes.md` records the
+preservation audit; `docs/deprecated.sha256` checks the frozen `deprecated/`
+reference. Working code has no runtime dependency on that archive. The separate
+`run.R` and top-level `src/*.R` are an eased-pose comparison implementation with
+their own tests and preview utilities.
