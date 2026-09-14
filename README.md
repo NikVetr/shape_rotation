@@ -13,8 +13,8 @@ nonlinear schedule, rotation prior, and face renderer.
 ## Install and run
 
 ```sh
-brew install r ffmpeg imagemagick
-Rscript -e 'install.packages(c("expm", "foreach", "doParallel", "png"), repos="https://cloud.r-project.org")'
+brew install r ffmpeg imagemagick pkgconf harfbuzz fribidi
+Rscript -e 'install.packages(c("expm", "png", "rgl", "webshot2", "ragg"), repos="https://cloud.r-project.org")'
 Rscript run_original.R --k=9 --cores=4 --out=output/my-k9
 ```
 
@@ -22,6 +22,7 @@ The output directory must be new or empty. It contains `rotation.mp4`, PNG
 frames, `animation.rds`, individual collapse checkpoints, `motion.csv`,
 `motion.png`, validation metrics, and R session information. Existing outputs
 are never deleted. `output/` and exploratory `tmp/` are ignored by Git.
+Use `--continue` to recover an interrupted render in the same directory.
 
 The original defaults are retained: 720 forward steps, 120 steps per reference
 rotation, seed 1, ten optimization candidates, and a ±10% duration search for
@@ -38,6 +39,28 @@ Rscript run_original.R --resume=output/plan/animation.rds --cores=4 --out=output
 Rscript run_original.R --k=5 --nrots=360 --nrep=3 --out=output/quick
 Rscript run_original.R --help
 ```
+
+Render the lit RGL version with PNG label textures, or a lighter base-R version:
+
+```sh
+Rscript run_original.R --resume=output/plan/animation.rds --rgl --face-alpha=0.01 --cores=4 --out=output/rgl
+Rscript run_original.R --resume=output/plan/animation.rds --device=ragg16 --face-alpha=0.004 --cores=4 --out=output/translucent
+# Continue with exactly the same rendering settings; worker count may change.
+Rscript run_original.R --continue --rgl --face-alpha=0.01 --cores=4 --out=output/rgl
+```
+
+RGL uses an isolated headless Chrome process per worker through `webshot2`.
+Chrome must be installed; `CHROMOTE_CHROME` can specify its executable. Native
+OpenGL windows and XQuartz are not needed for this path. RGL outputs also include
+`scene.html` and its asset directory: an interactive view of a high-dimensional
+frame. Labels use the installed Arial Unicode MS font to display ℝ correctly.
+
+Workers receive projection data once, then render numbered batches. Each PNG
+is decoded and checked before an atomic rename into the frame sequence. The
+encoder runs only after every expected frame is present. `render-times.csv`
+records per-frame timings; `workers.log` records worker output. Continuation
+checks saved input/settings, retains valid PNGs, repairs incomplete ones, and
+re-encodes when necessary. Workers and their browser processes are closed on exit.
 
 `--nrots` changes the original schedule's time scale. Larger values allow more
 time for alignment. `--seed` selects a different initial rotation. `--no-video`
@@ -63,16 +86,25 @@ Timing candidates are scored using their own durations. Invalid candidates are
 reported and rejected; the run fails if none meet alignment. Optimization is
 local and does not establish a global minimum correction.
 
-Rendering retains depth-sorted translucent faces, colored outlines, 800×800 Cairo
-PNGs, fixed bounds, and parallel workers. The original RGL branch and its PNG
-labels remain behind `--rgl`; install `rgl` separately and use an OpenGL-capable
-environment. That branch has not been validated on this laptop. The copied
-custom text utilities remain available; the original base-R branch drew no labels.
+Rendering retains depth-sorted translucent faces, colored outlines, 800×800 PNGs,
+fixed bounds, and parallel workers. Cairo remains the default base-R device;
+`--device=ragg16` uses 16-bit compositing for faint panels. `--rgl` uses lit blue
+faces, specular highlights, true edge topology, and unlit PNG label textures.
+The copied custom text utilities remain available; the base-R branch draws no labels.
 
 The base renderer draws the cube's actual edges after all face fills. This keeps
 edge-on faces from losing their edges and prevents translucent face layers from
 painting over previously drawn outlines. Coincident edges share one compound
 stroke to avoid repeated antialiasing buildup.
+
+`--face-alpha` sets each face's opacity. If omitted, the original `1 / 1.25^k`
+value remains in use. With many overlapping faces this can saturate: combined
+opacity is `1 - (1 - alpha)^layers`. The square stage of a k=9 cube has 128
+coincident layers throughout its interior; higher-dimensional stages have
+spatially varying counts. Use a smaller alpha to see those variations. At very
+low opacity, Cairo's 8-bit premultiplied colors can shift hue; use `ragg16` for
+the base-R comparison. WebGL also has finite color precision, so its practical
+opacity setting differs from the 16-bit renderer's.
 
 Smooth joins and a consistent screen-plane rotation direction do **not** imply
 constant full-dimensional angular speed or eliminate every perceptual rhythm.
@@ -85,6 +117,10 @@ trajectory remains a separate check.
 ```sh
 Rscript scripts/check_incremental.R
 Rscript scripts/check_incremental_rendering.R
+Rscript scripts/check_render_pipeline.R
+Rscript scripts/check_render_pipeline.R --rgl
+Rscript scripts/check_render_pipeline.R --ragg16
+Rscript scripts/check_panel_opacity.R
 shasum -a 256 -c docs/deprecated.sha256
 ```
 
@@ -92,6 +128,19 @@ Checks exercise Givens reconstruction through dimension 9, proper rotation
 products, endpoint velocity constraints, interpolation convergence at joins,
 same-direction line closure, timing metadata, and complete multi-seed
 trajectories. Full runs validate their own alignment and projected loop seam.
+Pipeline checks compare serial/parallel pixels, repair a corrupted frame,
+reject mismatched continuation settings, and verify worker failures prevent
+encoding. The panel check compares 128-layer compositing with its analytic result.
+
+The interactive export has a Playwright check using the installed Chrome browser:
+
+```sh
+python3 -m venv tmp/browser-check-env
+tmp/browser-check-env/bin/pip install playwright
+tmp/browser-check-env/bin/python scripts/check_rgl_scene.py output/rgl/scene.html
+```
+
+It checks WebGL errors, scene/texture objects, and camera rotation after dragging.
 
 See [repair notes](docs/repair_notes.md) for the preservation audit. The older
 `run.R` and top-level `src/*.R` are retained as a comparison experiment using

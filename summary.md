@@ -15,14 +15,20 @@ exact blend endpoints constrain incoming/outgoing velocity.
 edge-on square/line tilts, and closes the projected loop in the continuing
 rotation direction. `diagnostics.R` checks matrices, alignment, closure, and
 screen-plane direction, and exports motion plots. `render.R` draws depth-sorted
-translucent faces with base R/Cairo or optional RGL. `foreach`/`doParallel` support
-parallel rendering; FFmpeg encodes MP4. `text.R` supplies custom text utilities.
+translucent faces with base R/Cairo or 16-bit ragg. `render_rgl.R` builds lit
+RGL scenes with PNG label textures, snapshots them through headless Chrome,
+and exports interactive HTML. Base R's `parallel` package manages reusable
+socket workers for both rendering paths; FFmpeg encodes MP4. `text.R` supplies
+custom text utilities.
 The base renderer strokes the true edge graph after all face fills, keeping
 edges visible through degenerate projections and overlapping translucent faces.
 
 Outputs include solver checkpoints, full trajectory RDS data, PNG frames,
-validation metrics, motion plots, and R session information. Output directories
-must be empty; `output/` and exploratory `tmp/` are ignored by Git. Maximum
+validation metrics, motion plots, render timings, and R session information.
+Render input/settings are recorded so interrupted runs can retain verified
+frames and repair incomplete ones. PNG and video publication use atomic renames;
+encoding requires a complete frame sequence. New output directories must be
+empty; `output/` and exploratory `tmp/` are ignored by Git. Maximum
 dimension is at least three; computational cost grows exponentially. Local
 optimization does not guarantee globally minimal corrections or constant
 full-dimensional angular speed.
@@ -35,3 +41,9 @@ reference. Working code has no runtime dependency on that archive. The separate
 their own tests and preview utilities.
 `scripts/check_incremental_rendering.R` checks edge visibility in raster output,
 including dense overlaps, edge-on faces, and near-collapsed dimensions.
+Pipeline checks cover serial/parallel equality, restart recovery, and worker
+failures. Opacity checks compare high-precision panel accumulation with the
+analytic compositing formula. Face opacity is explicit and configurable; the
+original default remains available alongside lighter layered-panel views.
+`scripts/check_rgl_scene.py` uses Playwright to verify the exported scene's WebGL
+context, textured label, and interactive camera rotation in Chrome.

@@ -23,279 +23,165 @@ draw_incremental_projection <- function(xy, depth, faces, edges, face_col, edge_
   }
 }
 
+render_base_frame <- function(data, i, filename) {
+  if (identical(data$base_device, "ragg16")) {
+    ragg::agg_png(filename, width = 800, height = 800, pointsize = 35, bitsize = 16)
+  } else {
+    png(filename, width = 800, height = 800, type = "cairo", pointsize = 35)
+  }
+  on.exit(dev.off())
+  par(mar = c(0, 0, 0, 0))
+  plot.new()
+  plot.window(xlim = c(-data$axis_bounds, data$axis_bounds),
+              ylim = c(-data$axis_bounds, data$axis_bounds), asp = 1)
+  draw_incremental_projection(data$hcubes_proj[[i]], data$depths_proj[[i]],
+    data$hcube$faces, data$hcube$edges, data$face_cols[min(i, length(data$face_cols))],
+    data$seg_cols[min(i, length(data$seg_cols))])
+}
+
+valid_rendered_png <- function(path) {
+  if (!file.exists(path)) return(FALSE)
+  tryCatch({
+    dimensions <- dim(png::readPNG(path))
+    identical(dimensions[1:2], c(800L, 800L))
+  }, error = function(e) FALSE)
+}
+
+render_frame_batch <- function(numbers, context) {
+  vapply(numbers, function(number) {
+    i <- context$indices[number]
+    target <- file.path(context$frames_dir, sprintf("%05d.png", number))
+    temporary <- paste0(target, ".partial.png")
+    started <- proc.time()[[3]]
+    tryCatch({
+      if (any(!is.finite(context$data$hcubes_proj[[i]])) ||
+          any(!is.finite(context$data$depths_proj[[i]]))) stop("Non-finite projected coordinates")
+      if (context$use_rgl) render_rgl_frame(context$data, i, temporary) else
+        render_base_frame(context$data, i, temporary)
+      if (!valid_rendered_png(temporary)) stop("Invalid or incomplete PNG")
+      if (!file.rename(temporary, target)) stop("Cannot publish completed frame")
+    }, error = function(e) stop("Frame ", number, " (step ", i, "): ", conditionMessage(e)))
+    proc.time()[[3]] - started
+  }, numeric(1))
+}
+
+# Keep this closure outside the orchestrator so dispatch does not serialize
+# the entire animation environment again for every batch.
+render_worker_batch <- function(numbers) render_frame_batch(numbers, context)
+
+close_render_browser <- function() {
+  if ("chromote" %in% loadedNamespaces() && chromote::has_default_chromote_object()) {
+    chromote::default_chromote_object()$close()
+  }
+  invisible(NULL)
+}
+
 render_incremental_animation <- function(animation, out, thin = 2L, cores = 1L,
-                                         use_rgl = FALSE, video = TRUE) {
-  list2env(animation, environment())
-  if (length(hcubes_proj) %% thin != 0) {
-    stop("--thin must divide the saved trajectory length for a uniformly sampled loop; use --thin=1 or solve with the desired --thin")
+    use_rgl = FALSE, video = TRUE, face_alpha = NULL, continue = FALSE, batch_size = NULL,
+    device = "cairo") {
+  stopifnot(cores >= 1, thin >= 1)
+  if (length(animation$hcubes_proj) %% thin != 0) {
+    stop("--thin must divide the saved trajectory length; use --thin=1 or solve with the desired --thin")
   }
-  rot_hcube <- hcube
-  frames_dir <- paste0(out, "/frames/")
-  dir.create(frames_dir, recursive = TRUE, showWarnings = FALSE)
-if (cores > 1) {
-  cl <- parallel::makeCluster(cores)
-  on.exit(parallel::stopCluster(cl), add = TRUE)
-  doParallel::registerDoParallel(cl)
-} else {
-  foreach::registerDoSEQ()
-}
-
-#find plotting ranges
-max_val <- cummax(sapply(lapply(hcubes_proj, abs), max))
-
-#get opacity variable
-opa <- rep(1, length(hcubes_proj))
-
-#generate PNGs for label with fancy R
-hypercube_names <- c(
-  "point (ℝ⁰)",
-  "line segment (ℝ¹)",
-  "square (ℝ²)",
-  "cube (ℝ³)",
-  "tesseract (ℝ⁴)",
-  "penteract (ℝ⁵)",
-  "hexeract (ℝ⁶)",
-  "hepteract (ℝ⁷)",
-  "octeract (ℝ⁸)",
-  "ennearact (ℝ⁹)"
-)
-hypercube_names <- setNames(hypercube_names, sapply(strsplit(hypercube_names, " "), head, 1))
-if (k > 9) {
-  extra <- seq.int(10L, k)
-  hypercube_names <- c(hypercube_names, setNames(paste0(extra, "-cube"), paste0("cube", extra)))
-}
-labels_dir <- paste0(out, "/labels/")
-if (!dir.exists(labels_dir)) dir.create(labels_dir, recursive = TRUE)
-label_paths <- paste0(labels_dir, names(hypercube_names), ".png")
-
-#render png labels and recover dimension info
-label_dims <- cbind(w = rep(0, length(hypercube_names)),
-                    h = rep(0, length(hypercube_names)))
-if (use_rgl) for (i in seq_along(hypercube_names)) {
-  name <- names(hypercube_names)[i]
-  label <- hypercube_names[[name]]
-  label_dims[i,] <- unlist(render_label_png(label, label_paths[i], fontsize = 48, dpi = 96, padding_factor = 0.25))
-}
-
-#### draw static pictures ####
-plotting_inds <- seq(1, length(hcubes_proj), by = thin)
-n_plotting_inds <- length(plotting_inds)
-if(use_rgl){
-  if (!requireNamespace("rgl", quietly = TRUE)) stop("Install rgl to use --rgl")
-  library(rgl)
-  rgl_r_version <- function(){}
-  # foo <- foreach(i=1:length(hcubes_proj), .packages=c("rgl")) %dopar% {
-  # foo <- foreach(i=1:10, .packages=c("rgl")) %dopar% {
-  for(pi in 1:n_plotting_inds){
-
-    i <- plotting_inds[pi]
-
-    #report on progress
-    if (pi %% 100 == 0) cat("Rendered frame", pi, "of", n_plotting_inds, "\n")
-
-    # Recover hcube vertices for this frame
-    hcube_proj <- hcubes_proj[[i]]
-    depth_proj <- depths_proj[[i]]
-
-    #rgl setup
-    if (i == 1) {
-      open3d()
-      bg3d("white")
-      par3d(windowRect = c(0, 0, 800, 800))
-
-      # Dummy points to fix bounding box
-      dummy_pts <- expand.grid(
-        x = c(-1, 1) * axis_bounds,
-        y = c(-1, 1) * axis_bounds,
-        z = c(-1, 1) * axis_bounds
-      )
-      points3d(dummy_pts$x, dummy_pts$y, dummy_pts$z, alpha = 0)
-
-      # Remove default light and add overhead light
-      clear3d("lights")
-      light3d(x = 2, y = 2, z = 2,
-              diffuse = "white",
-              specular = "white",
-              ambient = "white",
-              viewpoint.rel = T
-      )
-
-      # set a view and lock
-      view3d(theta = 0, phi = 0, fov = 0, zoom = 0.75)
-      fixed_matrix <- par3d("userMatrix")
-
-    }
-
-    #set material properties
-    material3d(
-        color = face_col,
-        alpha = opa[i],
-        ambient = "black",
-        specular = "white",
-        emission = "black",
-        shininess = 50,
-        lit = TRUE,
-        smooth = TRUE
-      )
-    points3d(dummy_pts$x, dummy_pts$y, dummy_pts$z, alpha = 0)
-
-    #recover face coords in 3D
-    verts <- hcube_proj[!duplicated(round(hcube_proj, 9)),]
-    nverts <- nrow(verts)
-    if(nverts >= 4){
-
-      face_coords <- lapply(1:nrow(rot_hcube$faces), function(fi){
-        f_inds <- rot_hcube$faces[fi, chull(hcube_proj[rot_hcube$faces[fi, ], ])]
-        if(length(f_inds) == 4){
-          return(cbind(hcube_proj[f_inds, ], depth_proj[f_inds]))
-        } else {
-          return(NA)
-        }
-      })
-      face_coords <- Filter(function(x) is.matrix(x) && all(is.finite(x)), face_coords)
-
-      #recover order of faces
-      face_depths <- sapply(face_coords, function(x) mean(x[,3]))
-      face_order <- order(face_depths, decreasing=T)  # farthest to nearest
-
-    } else {
-      #here we have a line, so we can just plot it once?
-      face_coords <- list(verts)
-      face_order <- 1
-    }
-
-    # Filter out any NAs or improperly formed faces
-    valid_face_indices <- !sapply(face_coords, function(x) any(is.na(x)))
-    face_coords <- face_coords[valid_face_indices]
-
-    #recover only the unique face_coords
-    face_coords <- unique(face_coords)
-
-    #and also just the ones that are actual polygons and not eg points
-    face_coords <- face_coords[sapply(face_coords, function(fcs){
-      mean(apply(fcs, 2, var)) > 1E-4
-    })]
-
-    # plot faces
-
-    #one face at a time
-    # for (face_matrix in face_coords) {
-    #   quads3d(face_matrix, col = current_face_col, alpha = 1)
-    # }
-
-    #all faces together
-    if (length(face_coords) > 0) {
-      # Combine all vertices into one matrix for quads3d
-      all_face_vertices <- do.call(rbind, face_coords)
-
-      # Determine face color for this frame
-      current_face_col <- face_cols[min(i, length(face_cols))]
-      current_seg_col <- seg_cols[min(i, length(seg_cols))]
-
-      # Plot opaque quads. Color is recycled for all vertices.
-      if(nrow(all_face_vertices) < 4){
-        all_face_vertices <- cbind(all_face_vertices, 0)
-        lines3d(all_face_vertices, col = current_seg_col, lwd = 4)
-      } else {
-        quads3d(all_face_vertices)#, col = current_face_col, alpha = 1)
-        #outline the faces
-        num_quads <- nrow(all_face_vertices) / 4
-        indices <- t(matrix(1:(num_quads * 4), nrow = 4)) # Rows: quad vertex indices (1,2,3,4), (5,6,7,8), ...
-        seg_indices <- c(t(cbind(indices[,1], indices[,2], indices[,2], indices[,3],
-                                 indices[,3], indices[,4], indices[,4], indices[,1])))
-        segments3d(all_face_vertices[seg_indices, ], lwd = 4)#, col = current_seg_col) # Adjust color/lwd
-      }
-    }
-
-    #write in text for shape
-
-    #first recover text properties and location
-    text_pos <- c(-axis_bounds, axis_bounds, axis_bounds)
-    num_dim <- n_dim_per_tim[i]
-    label_dim = label_dims[num_dim + 1,]
-    label_ar <- label_dim["w"] / label_dim["h"]
-    label_h_prop_bounds <- 0.075
-    label_h <- label_h_prop_bounds * axis_bounds * 2
-    label_bounds <- list(
-      x = -axis_bounds + c(0, label_h, label_h, 0) * label_ar,
-      y = axis_bounds - c(0, 0, label_h, label_h)
-    )
-
-    # Now add the textured quad
-    quads3d(
-      x = label_bounds$x,
-      y = label_bounds$y,
-      z = c(0,0,0,0),
-      texcoords = list(
-        x = c(0,1,1,0),
-        y = c(1,1,0,0)
-      ),
-      texture = label_paths[num_dim+1],
-      lit     = T,
-      alpha   = 1,
-      blend   = c("src_alpha","one_minus_src_alpha"),
-      textype = "rgba",             # Use RGBA (alpha included)
-      texmode = "replace",          # Don’t multiply texture by object color
-      color   = "white"
-    )
-
-    #reset view angle
-    view3d(theta = 0, phi = 0, fov = 0, zoom = 0.75, userMatrix = fixed_matrix)
-
-    #plot to file
-    output_filename <- paste0(frames_dir, paste0(rep(0, 5 - nchar(pi)), collapse = ""), pi, ".png")
-    rgl.snapshot(filename = output_filename, fmt = "png")
-
-    #now clear the plotting pane to prepare for the next one
-    clear3d("shapes")
-
-    if(pi == n_plotting_inds){
-     close3d()
-    }
-
+  if (!is.null(face_alpha) && (!is.finite(face_alpha) || face_alpha < 0 || face_alpha > 1)) {
+    stop("--face-alpha must be between 0 and 1")
   }
-} else {
-  base_r_version <- function(){}
-  foo <- foreach(pi=1:n_plotting_inds, .packages=c("png"),
-                 .export = "draw_incremental_projection") %dopar% {
-
-    i <- plotting_inds[pi]
-
-    #report on progress
-    if (pi %% 100 == 0) cat("Rendered frame", pi, "of", n_plotting_inds, "\n")
-
-    #recover hcube vertices
-    hcube_proj <- hcubes_proj[[i]]
-    depth_proj <- depths_proj[[i]]
-
-    #write to file
-    png(filename = paste0(frames_dir, paste0(rep(0, 5 - nchar(pi)), collapse = ""), pi, ".png"),
-        width = 800, height = 800, type = "cairo", pointsize = 35)
-
-    par(mar = c(0,0,0,0))
-    plot.new()
-    plot.window(xlim = c(-axis_bounds, axis_bounds),
-                ylim = c(-axis_bounds, axis_bounds), asp = 1)
-    # plot.window(xlim = c(-max_val[i], max_val[i]),
-    #             ylim = c(-max_val[i], max_val[i]), asp = 1)
-
-
-    draw_incremental_projection(hcube_proj, depth_proj, rot_hcube$faces, rot_hcube$edges,
-                                face_cols[min(i, length(face_cols))],
-                                seg_cols[min(i, length(seg_cols))])
-
-    dev.off()
+  if (is.null(batch_size)) batch_size <- if (use_rgl) 2L else 16L
+  stopifnot(batch_size >= 1)
+  data <- animation[c("k", "hcube", "axis_bounds", "hcubes_proj", "depths_proj",
+                       "n_dim_per_tim", "face_cols", "seg_cols")]
+  if (!is.null(face_alpha)) {
+    colors <- col2rgb(data$face_cols) / 255
+    data$face_cols <- rgb(colors[1, ], colors[2, ], colors[3, ], alpha = face_alpha)
   }
-
-}
-
-
-if (video) {
-  target <- file.path(out, "rotation.mp4")
-  status <- system2("ffmpeg", c("-hide_banner", "-loglevel", "error", "-n",
-    "-framerate", 60 / thin, "-i", shQuote(paste0(frames_dir, "%05d.png")),
-    "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p", shQuote(target)))
-  if (status != 0) stop("ffmpeg encoding failed")
-}
-invisible(out)
+  data$face_alpha <- face_alpha
+  if (!use_rgl) {
+    if (!device %in% c("cairo", "ragg16")) stop("Unknown base graphics device: ", device)
+    if (device == "ragg16" && !requireNamespace("ragg", quietly = TRUE)) stop("Install R package: ragg")
+    data$base_device <- device
+  }
+  dir.create(out, recursive = TRUE, showWarnings = FALSE)
+  out <- normalizePath(out)
+  frames_dir <- file.path(out, "frames")
+  dir.create(frames_dir, showWarnings = FALSE)
+  settings <- list(version = 3L, thin = thin, use_rgl = use_rgl, face_alpha = face_alpha)
+  if (!use_rgl) settings$device <- device
+  manifest <- file.path(out, "render-settings.rds")
+  input <- file.path(out, "render-input.rds")
+  if (continue) {
+    if (!file.exists(manifest) || !file.exists(input) ||
+        !identical(readRDS(manifest), settings) || !identical(readRDS(input), data)) {
+      stop("Cannot continue: trajectory or rendering settings differ from the saved run")
+    }
+  } else {
+    if (file.exists(manifest) || length(list.files(frames_dir))) stop("Render output already exists; use --continue")
+    saveRDS(settings, manifest)
+    saveRDS(data, input)
+  }
+  if (use_rgl) {
+    if (!exists("render_rgl_frame", mode = "function")) stop("Load src/incremental/render_rgl.R first")
+    check_rgl_dependencies()
+    data$labels <- prepare_rgl_labels(data$k, out)
+  }
+  indices <- seq(1L, length(data$hcubes_proj), by = thin)
+  paths <- file.path(frames_dir, sprintf("%05d.png", seq_along(indices)))
+  complete <- vapply(paths, valid_rendered_png, logical(1))
+  pending <- which(!complete)
+  cat(sprintf("%s rendering: %d frames, %d cached, %d workers\n",
+              if (use_rgl) "RGL/WebGL" else device, length(indices), sum(complete), cores))
+  context <- list(data = data, indices = indices, frames_dir = frames_dir, use_rgl = use_rgl)
+  timings <- rep(NA_real_, length(indices))
+  timing_path <- file.path(out, "render-times.csv")
+  if (continue && file.exists(timing_path)) timings <- read.csv(timing_path)$seconds
+  cl <- NULL
+  on.exit({
+    if (!is.null(cl)) {
+      if (use_rgl) try(parallel::clusterCall(cl, close_render_browser), silent = TRUE)
+      parallel::stopCluster(cl)
+    } else if (use_rgl) close_render_browser()
+  }, add = TRUE)
+  if (length(pending) && cores > 1) {
+    cl <- parallel::makePSOCKcluster(min(cores, length(pending)), outfile = file.path(out, "workers.log"))
+    helpers <- c("render_base_frame", "draw_incremental_projection", "valid_rendered_png", "render_frame_batch")
+    if (use_rgl) helpers <- c(helpers, "render_rgl_frame", "build_rgl_scene", "check_rgl_dependencies")
+    parallel::clusterExport(cl, c(helpers, "context"), envir = environment())
+  }
+  started <- proc.time()[[3]]
+  batches <- split(pending, ceiling(seq_along(pending) / batch_size))
+  for (first in seq.int(1L, max(1L, length(batches)), by = cores)) {
+    if (!length(batches)) break
+    jobs <- batches[seq.int(first, min(length(batches), first + cores - 1L))]
+    result <- if (is.null(cl)) lapply(jobs, render_frame_batch, context = context) else
+      parallel::parLapplyLB(cl, jobs, render_worker_batch)
+    for (j in seq_along(jobs)) {
+      timings[jobs[[j]]] <- result[[j]]
+      complete[jobs[[j]]] <- TRUE
+    }
+    write.csv(data.frame(frame = seq_along(indices), step = indices, seconds = timings),
+              timing_path, row.names = FALSE)
+    cat(sprintf("Rendered %d/%d frames (%.1fs elapsed)\n", sum(complete), length(indices), proc.time()[[3]] - started))
+    flush.console()
+  }
+  if (!all(vapply(paths, valid_rendered_png, logical(1)))) stop("Incomplete frame sequence; encoding refused")
+  if (use_rgl) {
+    highest <- which(data$n_dim_per_tim == data$k)
+    if (!length(highest)) highest <- which.max(data$n_dim_per_tim)
+    scene <- build_rgl_scene(data, highest[ceiling(length(highest) / 2)])
+    htmlwidgets::saveWidget(rgl::rglwidget(scene, width = 800, height = 800,
+      fastTransparency = FALSE), file.path(out, "scene.html"), selfcontained = FALSE,
+      title = paste0("Interactive ", data$k, "-cube"))
+  }
+  if (video) {
+    target <- file.path(out, "rotation.mp4")
+    if (file.exists(target) && !continue) stop("Video already exists")
+    if (!file.exists(target) || length(pending)) {
+      temporary <- file.path(out, "rotation.partial.mp4")
+      status <- system2("ffmpeg", c("-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-framerate", 60 / thin, "-start_number", "1", "-i", shQuote(file.path(frames_dir, "%05d.png")),
+        "-frames:v", length(indices), "-c:v", "libx264", "-crf", "20", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", shQuote(temporary)))
+      if (status != 0 || !file.rename(temporary, target)) stop("ffmpeg encoding failed")
+    }
+  }
+  invisible(out)
 }

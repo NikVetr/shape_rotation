@@ -27,7 +27,7 @@ so configuration and output handling can be explicit.
 | Square tilted about its diagonal to make a line | Retained |
 | Same-direction line return with flexible duration | Retained with endpoint fixes |
 | Translucent blue faces, depth order, outlines, fixed bounds | Retained |
-| Parallel base-R and optional RGL renderer with PNG labels | Retained; RGL not yet validated here |
+| Parallel base-R and RGL renderer with PNG labels | Both validated; headless RGL snapshots use WebGL |
 | Custom text functions | Copied, retaining effective final definitions |
 
 There is no imposed screen-spin factor, prescribed pose gate, or angular-speed
@@ -87,7 +87,26 @@ normalization in this pipeline. The eased implementation remains separate in
     list. Degenerate faces cannot remove edges; coincident edges are stroked
     together to keep antialiasing stable. This makes back edges fully visible
     instead of progressively obscuring them with face layers. Motion data and
-    the optional RGL branch are unchanged by this rendering fix.
+    the RGL branch were unchanged by that edge-only fix.
+13. **RGL execution and scene construction.** The renderer uses the original
+    lit blue materials, fixed orthographic camera, and PNG label textures.
+    The edge graph is independent of face filtering. Face vertices use their
+    topology order rather than a screen-space hull, and only zero-area 3D
+    faces are excluded. Faces use explicit alpha and no depth writes; labels
+    are unlit, placed in front, and use a font containing ℝ. Headless WebGL
+    snapshots replace native window capture, and browser failures are fatal.
+14. **Parallel rendering and recovery.** Both renderers use dedicated socket
+    workers and numbered batches. Projection data is exported once; task closures
+    do not capture the full animation environment. PNGs are validated before
+    publication. Saved inputs/settings protect continuation from mixing runs;
+    invalid frames are regenerated and worker failures prevent video encoding.
+    Timing logs, progress updates, and explicit worker/browser cleanup are shared.
+15. **Panel saturation and color precision.** Original k=9 alpha is about 0.134;
+    128 layers are effectively opaque. A sampled full-dimensional frame contains
+    8–410 layers, while its square stage has 128 throughout the interior. Face
+    opacity is now configurable. Optional 16-bit ragg compositing avoids the
+    color shifts observed with faint repeated Cairo fills. The original device
+    and alpha remain the defaults; lighter previews explicitly select alternatives.
 
 Suspicious comments in `undokrot` were not sufficient reason to replace it:
 round-trip tests pass for the small incremental rotations it actually receives.
@@ -101,8 +120,9 @@ duration metadata, and complete k=3/k=5 trajectories with multiple seeds. A
 full k=9 solve uses ten timing candidates and validates alignment and its seam.
 Checksums separately protect the archive.
 
-Base rendering is exercised by k=5 and k=9 previews. RGL and optional text
-utilities are retained but not fully exercised. The original renderer can still
+Base rendering is exercised by k=5 and k=9 previews; RGL is exercised by scene,
+parallel/recovery checks, and a k=9 video. Optional custom text utilities are
+retained but not fully exercised. Repeated face fills can still
 show opacity changes when overlapping faces split or merge. No replacement
 silhouette/edge renderer has been silently substituted.
 
@@ -110,6 +130,20 @@ silhouette/edge renderer has been silently substituted.
 in line, edge-on-face, square, coincident, dense k=3/5/9, and near-collapse cases.
 The previous renderer fails the check; the corrected renderer passes. The k=9
 video was rerendered from the same saved trajectory to isolate the visual fix.
+
+`scripts/check_render_pipeline.R` checks serial/parallel pixels, corrupted PNG
+recovery, mismatched settings, and explicit worker failure for both Cairo and
+RGL (`--rgl`). `scripts/check_panel_opacity.R` compares a 128-layer 16-bit render
+with `1 - (1 - alpha)^128`. No motion optimization changes are part of these
+rendering improvements.
+
+`scripts/check_rgl_scene.py` uses Playwright to open the exported HTML in Chrome,
+check the WebGL context and scene/texture objects, and verify that dragging
+changes the camera rotation matrix without JavaScript errors.
+
+Rendering references: [RGL snapshots](https://dmurdoch.github.io/rgl/reference/snapshot.html),
+[RGL materials](https://dmurdoch.github.io/rgl/reference/material.html), and
+[ragg 16-bit PNGs](https://ragg.r-lib.org/reference/agg_png.html).
 
 These repairs remove specific discontinuities. They do not prove globally
 minimal nudges, constant full-dimensional angular speed, or absence of perceived
