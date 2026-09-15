@@ -20,6 +20,14 @@ RGL scenes with PNG label textures, snapshots them through headless Chrome,
 and exports interactive HTML. Base R's `parallel` package manages reusable
 socket workers for both rendering paths; FFmpeg encodes MP4. `text.R` supplies
 custom text utilities.
+`face_labels.R` plans face-mounted dimension numerals for opaque RGL rendering.
+Stable face identities retain their labels while visible; a hidden interval
+preloads the number for the next appearance. Convex supporting planes determine
+visibility for the fixed orthographic camera, with adjacent-step concealment
+checks at changes and across the loop seam. The plan precedes thinning and
+parallel rendering. RGB numeral textures share the lit panel material and its
+depth test; front/back UV coordinates prevent mirrored printing. A face may
+retain an older numeral across multiple stages until it is concealed.
 The base renderer strokes the true edge graph after all face fills, keeping
 edges visible through degenerate projections and overlapping translucent faces.
 
@@ -47,3 +55,7 @@ analytic compositing formula. Face opacity is explicit and configurable; the
 original default remains available alongside lighter layered-panel views.
 `scripts/check_rgl_scene.py` uses Playwright to verify the exported scene's WebGL
 context, textured label, and interactive camera rotation in Chrome.
+`scripts/check_face_numbers.R` compares face visibility with independent ray
+intersections through k=9 and verifies label retention and concealed changes.
+`scripts/check_face_number_occlusion.R` renders before/after label assignments at
+fixed poses to check that hidden changes leave identical pixels.

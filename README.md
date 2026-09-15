@@ -44,6 +44,7 @@ Render the lit RGL version with PNG label textures, or a lighter base-R version:
 
 ```sh
 Rscript run_original.R --resume=output/plan/animation.rds --rgl --face-alpha=0.01 --cores=4 --out=output/rgl
+Rscript run_original.R --resume=output/plan/animation.rds --rgl --face-alpha=1 --face-numbers --cores=4 --out=output/numbered
 Rscript run_original.R --resume=output/plan/animation.rds --device=ragg16 --face-alpha=0.004 --cores=4 --out=output/translucent
 # Continue with exactly the same rendering settings; worker count may change.
 Rscript run_original.R --continue --rgl --face-alpha=0.01 --cores=4 --out=output/rgl
@@ -54,6 +55,24 @@ Chrome must be installed; `CHROMOTE_CHROME` can specify its executable. Native
 OpenGL windows and XQuartz are not needed for this path. RGL outputs also include
 `scene.html` and its asset directory: an interactive view of a high-dimensional
 frame. Labels use the installed Arial Unicode MS font to display ℝ correctly.
+
+`--face-numbers` prints dimension numerals directly onto opaque faces. It requires
+`--rgl --face-alpha=1`. Each face retains its number while visible; hidden faces
+receive the dimension scheduled for their next appearance. Numbers rotate and
+foreshorten with the face, with separate texture coordinates for readable front
+and back printing. The top-left dimension caption remains as a reference.
+A line has no face on which to print “1”. An older number may persist across
+several stages if its face has not yet disappeared from view.
+
+The label planner uses stable original face identities and supporting planes of
+the convex 3D projection to distinguish visible faces from buried ones. Coincident
+faces count as potentially visible. Changes require concealment at the current
+integration step and both neighboring steps, including the loop seam. The plan
+is computed before frame thinning or parallel dispatch and saved in
+`face-numbers.rds` for inspection. Opaque materials write depth, so interior
+numbers cannot show through their covering panels. Visibility planning assumes
+the video's fixed orthographic camera; dragging the exported static scene does
+not recompute label history for a new camera path.
 
 Workers receive projection data once, then render numbered batches. Each PNG
 is decoded and checked before an atomic rename into the frame sequence. The
@@ -121,6 +140,9 @@ Rscript scripts/check_render_pipeline.R
 Rscript scripts/check_render_pipeline.R --rgl
 Rscript scripts/check_render_pipeline.R --ragg16
 Rscript scripts/check_panel_opacity.R
+Rscript scripts/check_face_numbers.R
+Rscript scripts/check_render_pipeline.R --face-numbers
+Rscript scripts/check_face_number_occlusion.R output/plan/animation.rds
 shasum -a 256 -c docs/deprecated.sha256
 ```
 
@@ -138,9 +160,15 @@ The interactive export has a Playwright check using the installed Chrome browser
 python3 -m venv tmp/browser-check-env
 tmp/browser-check-env/bin/pip install playwright
 tmp/browser-check-env/bin/python scripts/check_rgl_scene.py output/rgl/scene.html
+tmp/browser-check-env/bin/python scripts/check_rgl_scene.py output/numbered/scene.html --face-numbers
 ```
 
 It checks WebGL errors, scene/texture objects, and camera rotation after dragging.
+Face-number checks independently intersect rays with projected panels through
+k=9, verify hidden-only changes and visible-label retention, and exercise
+coincident faces, line projections, and the circular frame boundary.
+The occlusion check holds geometry fixed at sampled relabeling events and verifies
+that changing the hidden numerals leaves the rendered pixels identical.
 
 See [repair notes](docs/repair_notes.md) for the preservation audit. The older
 `run.R` and top-level `src/*.R` are retained as a comparison experiment using

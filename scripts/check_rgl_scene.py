@@ -22,6 +22,16 @@ with sync_playwright() as playwright:
     }""")
     assert not status["lost"] and status["error"] == 0, status
     assert all(tag in status["tags"] for tag in ("panels", "edges", "label")), status
+    if "--face-numbers" in sys.argv:
+        panels = page.evaluate("""() => {
+          const r = document.querySelector('.rglWebGL').rglinstance;
+          return Object.values(r.scene.objects).filter(o => o.material?.tag === 'panels')
+            .map(o => ({texture: o.material.uri?.startsWith('data:image/png'),
+                        depth: r.getMaterial(o, 'depth_mask'),
+                        type: r.getMaterial(o, 'textype')}));
+        }""")
+        assert panels and all(p["texture"] and p["depth"] for p in panels), panels
+        assert all(p["type"] == "rgb" for p in panels), panels
     matrix = "JSON.stringify(document.querySelector('.rglWebGL').rglinstance.getObj(document.querySelector('.rglWebGL').rglinstance.scene.rootSubscene).par3d.userMatrix)"
     before = page.evaluate(matrix)
     assert before is not None, "Scene has no camera rotation matrix"

@@ -78,13 +78,16 @@ close_render_browser <- function() {
 
 render_incremental_animation <- function(animation, out, thin = 2L, cores = 1L,
     use_rgl = FALSE, video = TRUE, face_alpha = NULL, continue = FALSE, batch_size = NULL,
-    device = "cairo") {
+    device = "cairo", face_numbers = FALSE) {
   stopifnot(cores >= 1, thin >= 1)
   if (length(animation$hcubes_proj) %% thin != 0) {
     stop("--thin must divide the saved trajectory length; use --thin=1 or solve with the desired --thin")
   }
   if (!is.null(face_alpha) && (!is.finite(face_alpha) || face_alpha < 0 || face_alpha > 1)) {
     stop("--face-alpha must be between 0 and 1")
+  }
+  if (face_numbers && (!use_rgl || !isTRUE(face_alpha == 1))) {
+    stop("Face numbers require --rgl --face-alpha=1")
   }
   if (is.null(batch_size)) batch_size <- if (use_rgl) 2L else 16L
   stopifnot(batch_size >= 1)
@@ -105,6 +108,8 @@ render_incremental_animation <- function(animation, out, thin = 2L, cores = 1L,
   frames_dir <- file.path(out, "frames")
   dir.create(frames_dir, showWarnings = FALSE)
   settings <- list(version = 3L, thin = thin, use_rgl = use_rgl, face_alpha = face_alpha)
+  if (face_numbers) settings$face_numbers <- 1L
+  if (use_rgl && isTRUE(face_alpha == 1)) settings$opaque_depth_write <- TRUE
   if (!use_rgl) settings$device <- device
   manifest <- file.path(out, "render-settings.rds")
   input <- file.path(out, "render-input.rds")
@@ -122,6 +127,12 @@ render_incremental_animation <- function(animation, out, thin = 2L, cores = 1L,
     if (!exists("render_rgl_frame", mode = "function")) stop("Load src/incremental/render_rgl.R first")
     check_rgl_dependencies()
     data$labels <- prepare_rgl_labels(data$k, out)
+    if (face_numbers) {
+      cat("Planning concealed face-number changes...\n")
+      data$face_numbers <- plan_face_numbers(data)
+      saveRDS(data$face_numbers, file.path(out, "face-numbers.rds"))
+      data$number_textures <- prepare_face_number_textures(data$k, out)
+    }
   }
   indices <- seq(1L, length(data$hcubes_proj), by = thin)
   paths <- file.path(frames_dir, sprintf("%05d.png", seq_along(indices)))

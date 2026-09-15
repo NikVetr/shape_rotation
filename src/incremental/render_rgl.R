@@ -39,14 +39,35 @@ build_rgl_scene <- function(data, i) {
   a <- xyz[faces[, 2], ] - xyz[faces[, 1], ]
   b <- xyz[faces[, 4], ] - xyz[faces[, 1], ]
   area2 <- rowSums(a^2) * rowSums(b^2) - rowSums(a * b)^2
-  faces <- faces[area2 > 1e-24, , drop = FALSE]
+  keep <- area2 > 1e-24
+  faces <- faces[keep, , drop = FALSE]
   color <- col2rgb(data$face_cols[min(i, length(data$face_cols))], alpha = TRUE) / 255
   alpha <- if (is.null(data$face_alpha)) color[4] else data$face_alpha
   if (nrow(faces)) {
-    rgl::quads3d(xyz[as.vector(t(faces)), ], color = rgb(color[1], color[2], color[3]),
-      alpha = alpha, ambient = "black", specular = "white", emission = "black",
-      shininess = 50, lit = TRUE, smooth = FALSE, depth_mask = FALSE,
-      polygon_offset = 1, tag = "panels")
+    material <- list(color = rgb(color[1], color[2], color[3]), alpha = alpha,
+      ambient = "black", specular = "white", emission = "black", shininess = 50,
+      lit = TRUE, smooth = FALSE, depth_mask = alpha == 1, polygon_offset = 1,
+      tag = "panels")
+    if (is.null(data$face_numbers)) {
+      do.call(rgl::quads3d, c(list(x = xyz[as.vector(t(faces)), ]), material))
+    } else {
+      numbers <- data$face_numbers$numbers[keep, i]
+      for (number in unique(numbers)) {
+        vertices <- xyz[as.vector(t(faces[numbers == number, , drop = FALSE])), ]
+        uv <- cbind(c(0, 1, 1, 0), c(0, 0, 1, 1))
+        # Ink is part of the opaque material, so buried numerals obey the same
+        # depth test as their panels. Reverse UVs on the back to avoid mirroring.
+        for (back in c(FALSE, TRUE)) {
+          coords <- uv
+          if (back) coords[, 1] <- 1 - coords[, 1]
+          do.call(rgl::quads3d, c(list(x = vertices,
+            texcoords = coords[rep(1:4, nrow(vertices) / 4), ],
+            texture = data$number_textures[number], textype = "rgb", texmode = "modulate",
+            front = if (back) "culled" else "filled",
+            back = if (back) "filled" else "culled"), material))
+        }
+      }
+    }
   }
   edges <- data$hcube$edges
   delta <- xyz[edges[, 1], ] - xyz[edges[, 2], ]
