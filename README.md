@@ -108,6 +108,21 @@ The closing interval is timed so the frame count is divisible by `--thin`.
 When resuming saved data, choose a thinning factor that divides its length;
 `--thin=1` always does. This avoids a shorter time interval at the video seam.
 
+## Browser export
+
+`scripts/export_web_plan.R` writes a solved plan as JSON for a browser viewer
+(https://vetr.dev/hypercube/), which replays it instead of a rendered video.
+Each integration step's projected vertices and depths are linear in the base
+cube's vertices, so a step is stored as its k×3 matrix (float32, base64), with
+the stage dimensions and the `--face-numbers` plan as initial numbers plus
+change events. The script refuses a step that is not linear to 1e-8.
+
+```sh
+Rscript scripts/export_web_plan.R output/plan/animation.rds k9.json
+# R's own data for chosen steps, for a port's parity tests:
+Rscript scripts/export_web_plan.R output/plan/animation.rds k9.json --frames=67,719 --frames-out=frames.json
+```
+
 ## Motion and rendering
 
 Square-to-line stages retain the original diagonal-axis tilt. Expansion blends

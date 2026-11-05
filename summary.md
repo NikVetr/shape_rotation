@@ -33,6 +33,8 @@ edges visible through degenerate projections and overlapping translucent faces.
 
 Outputs include solver checkpoints, full trajectory RDS data, PNG frames,
 validation metrics, motion plots, render timings, and R session information.
+`scripts/export_web_plan.R` exports a solved plan for a browser viewer: one k×3
+projection matrix per step, stage dimensions and face-number events.
 Render input/settings are recorded so interrupted runs can retain verified
 frames and repair incomplete ones. PNG and video publication use atomic renames;
 encoding requires a complete frame sequence. New output directories must be
