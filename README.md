@@ -18,6 +18,23 @@ Rscript -e 'install.packages(c("expm", "png", "rgl", "webshot2", "ragg"), repos=
 Rscript run_original.R --k=9 --cores=4 --out=output/my-k9
 ```
 
+On Ubuntu 22.04, the same R packages build from source:
+
+```sh
+sudo apt install r-base ffmpeg imagemagick google-chrome-stable pkg-config \
+  libfontconfig1-dev libfreetype-dev libharfbuzz-dev libfribidi-dev libpng-dev \
+  libtiff-dev libjpeg-dev libwebp-dev libssl-dev libx11-dev
+Rscript -e 'install.packages(c("expm", "png", "rgl", "webshot2", "ragg"), repos="https://cloud.r-project.org")'
+```
+
+OpenGL headers are optional. Without them, rgl builds only its null/WebGL
+device, which is all the headless RGL renderer uses. Chrome comes from Google's
+APT repository; `CHROMOTE_CHROME` can name another Chrome or Chromium. Linux
+fontconfig substitutes an installed font, such as DejaVu Sans, for Arial
+Unicode MS; it still displays ℝ and superscripts. ImageMagick 6's `convert`
+and `compare` commands are accepted in place of `magick`. Verify the archive
+with `sha256sum -c docs/deprecated.sha256`.
+
 The output directory must be new or empty. It contains `rotation.mp4`, PNG
 frames, `animation.rds`, individual collapse checkpoints, `motion.csv`,
 `motion.png`, validation metrics, and R session information. Existing outputs

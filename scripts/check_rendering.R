@@ -3,8 +3,9 @@ root <- dirname(dirname(normalizePath(sub("^--file=", "", args[1]))))
 for (file in c("rotation_math", "dimension_schedule", "animation", "render_frames")) {
   source(file.path(root, "src", paste0(file, ".R")))
 }
-magick <- Sys.which("magick")
-if (!nzchar(magick)) stop("Install ImageMagick to run the raster continuity tests")
+# ImageMagick 7 provides `magick compare`; ImageMagick 6 (Ubuntu 22.04) provides `compare`.
+compare <- if (nzchar(Sys.which("magick"))) c(Sys.which("magick"), "compare") else Sys.which("compare")
+if (!nzchar(compare[1])) stop("Install ImageMagick to run the raster continuity tests")
 scratch <- file.path(root, "tmp", "output", paste0("render-tests-", Sys.getpid()))
 dir.create(scratch, recursive = TRUE)
 plan <- build_animation_plan(9)
@@ -27,8 +28,8 @@ for (i in seq_len(nrow(transitions))) {
       state$stage <- plan$schedule[1, ]
       render_animation_frame(state, geometry, 2, files[side], 640, 640)
     }
-    metric <- suppressWarnings(system2(magick,
-      c("compare", "-metric", "RMSE", shQuote(files), "null:"), stdout = TRUE, stderr = TRUE))
+    metric <- suppressWarnings(system2(compare[1],
+      c(compare[-1], "-metric", "RMSE", shQuote(files), "null:"), stdout = TRUE, stderr = TRUE))
     status <- attr(metric, "status")
     if (!is.null(status) && status != 1L) stop(paste(metric, collapse = "\n"))
     match <- regmatches(metric, regexec("\\(([0-9.eE+-]+)\\)", metric))

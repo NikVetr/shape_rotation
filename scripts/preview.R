@@ -5,7 +5,9 @@ root <- dirname(dirname(normalizePath(sub("^--file=", "", script[1]))))
 for (file in c("rotation_math", "dimension_schedule", "animation", "render_frames")) {
   source(file.path(root, "src", paste0(file, ".R")))
 }
+# ImageMagick 6 (Ubuntu 22.04) names the same command `convert`.
 magick <- Sys.which("magick")
+if (!nzchar(magick)) magick <- Sys.which("convert")
 if (!nzchar(magick)) stop("Install ImageMagick to create the storyboard")
 out <- normalizePath(args[1], mustWork = TRUE)
 result <- readRDS(file.path(out, "animation.rds"))
